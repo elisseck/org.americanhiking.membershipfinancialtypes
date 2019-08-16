@@ -470,5 +470,11 @@ function _membershipfinancialtypes_civix_civicrm_alterSettingsFolders(&$metaData
 
 function _membershipfinancialtypes_civix_civicrm_entityTypes(&$entityTypes) {
   $entityTypes = array_merge($entityTypes, array (
+    'CRM_Membershipfinancialtypes_DAO_membershipTracking' => 
+    array (
+      'name' => 'MembershipTracking',
+      'class' => 'CRM_Membershipfinancialtypes_DAO_membershipTracking',
+      'table' => 'civicrm_membership_tracking',
+    ),
   ));
 }

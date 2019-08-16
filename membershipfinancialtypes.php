@@ -5,20 +5,31 @@ use CRM_Membershipfinancialtypes_ExtensionUtil as E;
 
 function membershipfinancialtypes_civicrm_pre($op, $objectName, $id, &$params) {
   if($objectName == 'Membership' && ($op == 'create' || $op == 'edit')) {
-    $result = civicrm_api3('Membership', 'getsingle', [
-      'id' => $id,
-    ]);
-    $sixMonthsAgo = _membershipfinancialtypes_six_months($result['end_date']);
-    if ($sixMonthsAgo) {
-      $value = "Yes";
+    //check before we save any membership, if there's no id, it's a new membership and we'll get new financial type through payment #
+    if ($id) {
+      $result = civicrm_api3('Membership', 'getsingle', [
+        'id' => $id,
+      ]);
+      //is this a renewal from more than six months ago?
+      $sixMonthsAgo = _membershipfinancialtypes_six_months($result['end_date']);
+      dpm($sixMonthsAgo);
+      //make sure we don't generate a bad sql query
+      if ($sixMonthsAgo) {
+        $value = 1;
+      }
+      else {
+        $value = 0;
+      }
+      //generate SQL insert a 'six month' value if we should give the new financial type. We'll check this later.
+      //remove all if not... because we're just going to check whether it exists
+      if ($value == 1) {
+        $sql = "INSERT INTO civicrm_membership_tracking (membership_id, six_month_status) VALUES ({$id}, {$value});";
+      }
+      else if ($value == 0) {
+        $sql = "DELETE FROM civicrm_membership_tracking WHERE `membership_id` = {$id};";
+      }
+      $q = CRM_Core_DAO::executeQuery($sql);
     }
-    else {
-      $value = "No";
-    }
-    $result = civicrm_api3('Contact', 'create', [
-      'id' => $result['id'],
-      'custom_15' => $value,
-    ]);
   }
 }
 
@@ -50,6 +61,12 @@ function membershipfinancialtypes_civicrm_post($op, $objectName, $id, &$objectRe
           'sequential' => 1,
           'membership_id' => $membership['id'],
         ]);
+        $sql = "SELECT * FROM civicrm_membership_tracking WHERE membership_id = {$membership['id']};";
+        $tracking = CRM_Core_DAO::executeQuery($sql);
+        $result = array();
+        while ($tracking->fetch()) {
+           $result[] = $tracking->toArray();
+        }
       }
       catch (CiviCRM_API3_Exception $e) {
         $error = $e->getMessage();
@@ -58,10 +75,9 @@ function membershipfinancialtypes_civicrm_post($op, $objectName, $id, &$objectRe
       if (isset($payments)) {
         $yeartypes = array(8, 9, 11, 12, 13, 14, 17, 18, 19, 20, 1);
         $monthtypes = array(6, 7, 15, 16, 5);
-if (in_array($membership['membership_type_id'], $yeartypes)) {
+      if (in_array($membership['membership_type_id'], $yeartypes)) {
           //check if it's greater than six months since the last membership end date for this contact, if so we should change financial types
-          //$sixMonths = _membershipfinancialtypes_six_months($membership['contact_id']);
-          if ($contact['custom_15'] == 'Yes') {
+          if (count($result) > 0) {
             $sixMonths = TRUE;
           }
           //If we don't find any payments... this is the first for this membership and it gets the 'new' financial type
@@ -83,8 +99,13 @@ if (in_array($membership['membership_type_id'], $yeartypes)) {
         }
         elseif (in_array($membership['membership_type_id'], $monthtypes)) {
           //check if it's greater than six months since the last membership end date for this contact
-          //$sixMonths = _membershipfinancialtypes_six_months($membership['contact_id']);
-          if ($contact['custom_15'] == 'Yes') {
+          $sql = "SELECT FROM civicrm_membership_tracking WHERE membership_id = {$membership['id']};";
+          $tracking = CRM_Core_DAO::executeQuery($sql);
+          $result = array();
+          while ($tracking->fetch()) {
+             $result[] = $tracking->toArray();
+          }
+          if (count($result) > 0) {
             $sixMonths = TRUE;
           }
           //For the 12 month memberships... we also need to check if we're in the middle of a year of the new financial type payments
@@ -107,7 +128,6 @@ if (in_array($membership['membership_type_id'], $yeartypes)) {
           }
         }
       }
-
     }
   }
 }
@@ -138,44 +158,20 @@ function _updateMembershipCustomField($id, $value = "No") {
     }
 }
 
-/**
- *  check if all memberships for this contact have and end date greater than 6 months ago
- */
 function _membershipfinancialtypes_six_months($end_date) {
-  /*try {
-    $result = civicrm_api3('Membership', 'get', [
-      'sequential' => 1,
-      'contact_id' => $contact_id,
-    ]);
-  }
-  catch (CiviCRM_API3_Exception $e) {
-    $error = $e->getMessage();
-    CRM_Core_Error::debug_log_message($error);
-  }*/
-  //$count = 0;
-  //foreach ($result['values'] as $mem) {
-    $now = new DateTime();
-      $input = DateTime::createFromFormat('Y-m-d', $end_date);
-    if ($input) {
-      $diff = $input->diff($now);
-      if ($diff->m > 6) {
-        return TRUE;
-      }
+  $now = new DateTime();
+  $input = DateTime::createFromFormat('Y-m-d', $end_date);
+  if ($input) {
+    $diff = $input->diff($now);
+    $diff = $diff->format("%r%a");
+    if ($diff > 180) {
+      return TRUE;
     }
-    return FALSE;
-  //}
-  //If all checked memberships are greater than six months in the past, return true
-  /*if ($count == $result['count']) {
-    return TRUE;
   }
-  else {
-    return FALSE;
-  }*/
+  return FALSE;
 }
 
-/**
- * for 12 month memberships, check if the last payment was a "new" financial type, if so, check if we're in the middle of that 12 month cycle and if we're in the middle, return true
- */
+
 function _membershipfinancialtypes_check_monthly($payments) {
   //Can't assume they're in chronological order so we have to check
   $ids = array();
@@ -349,31 +345,3 @@ function membershipfinancialtypes_civicrm_entityTypes(&$entityTypes) {
 function membershipfinancialtypes_civicrm_themes(&$themes) {
   _membershipfinancialtypes_civix_civicrm_themes($themes);
 }
-
-// --- Functions below this ship commented out. Uncomment as required. ---
-
-/**
- * Implements hook_civicrm_preProcess().
- *
- * @link https://docs.civicrm.org/dev/en/latest/hooks/hook_civicrm_preProcess
- *
-function membershipfinancialtypes_civicrm_preProcess($formName, &$form) {
-
-} // */
-
-/**
- * Implements hook_civicrm_navigationMenu().
- *
- * @link https://docs.civicrm.org/dev/en/latest/hooks/hook_civicrm_navigationMenu
- *
-function membershipfinancialtypes_civicrm_navigationMenu(&$menu) {
-  _membershipfinancialtypes_civix_insert_navigation_menu($menu, 'Mailings', array(
-    'label' => E::ts('New subliminal message'),
-    'name' => 'mailing_subliminal_message',
-    'url' => 'civicrm/mailing/subliminal',
-    'permission' => 'access CiviMail',
-    'operator' => 'OR',
-    'separator' => 0,
-  ));
-  _membershipfinancialtypes_civix_navigationMenu($menu);
-} // */
