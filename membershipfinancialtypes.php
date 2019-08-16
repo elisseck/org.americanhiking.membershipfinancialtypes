@@ -12,7 +12,6 @@ function membershipfinancialtypes_civicrm_pre($op, $objectName, $id, &$params) {
       ]);
       //is this a renewal from more than six months ago?
       $sixMonthsAgo = _membershipfinancialtypes_six_months($result['end_date']);
-      dpm($sixMonthsAgo);
       //make sure we don't generate a bad sql query
       if ($sixMonthsAgo) {
         $value = 1;
