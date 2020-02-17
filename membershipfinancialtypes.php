@@ -3,6 +3,13 @@
 require_once 'membershipfinancialtypes.civix.php';
 use CRM_Membershipfinancialtypes_ExtensionUtil as E;
 
+//This shouldn't be in this extension but we don't have time to build a new one for them
+function membershipfinancialtypes_civicrm_buildForm($formName, &$form) {
+  if ($formName == 'CRM_Event_Form_Registration_Register' || $formName == 'CRM_Event_Form_Registration_AdditionalParticipant') {
+    CRM_Core_Resources::singleton()->addScriptFile('org.americanhiking.membershipfinancialtypes', 'js/prices12.js');
+  }
+}
+
 function membershipfinancialtypes_civicrm_pre($op, $objectName, $id, &$params) {
   if($objectName == 'Membership' && ($op == 'create' || $op == 'edit')) {
     //check before we save any membership, if there's no id, it's a new membership and we'll get new financial type through payment #
@@ -60,7 +67,7 @@ function membershipfinancialtypes_civicrm_post($op, $objectName, $id, &$objectRe
           'sequential' => 1,
           'membership_id' => $membership['id'],
         ]);
-        $sql = "SELECT * FROM civicrm_membership_tracking WHERE membership_id = {$membership['id']};";
+        $sql = "SELECT * FROM `civicrm_membership_tracking` WHERE `membership_id` = {$membership['id']};";
         $tracking = CRM_Core_DAO::executeQuery($sql);
         $result = array();
         while ($tracking->fetch()) {
@@ -72,8 +79,8 @@ function membershipfinancialtypes_civicrm_post($op, $objectName, $id, &$objectRe
         CRM_Core_Error::debug_log_message($error);
       }
       if (isset($payments)) {
-        $yeartypes = array(8, 9, 11, 12, 13, 14, 17, 18, 19, 20, 1);
-        $monthtypes = array(6, 7, 15, 16, 5);
+        $yeartypes = array(5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 18, 19, 20, 21, 22, 23);
+        $monthtypes = array(1, 2, 3, 4, 17);
       if (in_array($membership['membership_type_id'], $yeartypes)) {
           //check if it's greater than six months since the last membership end date for this contact, if so we should change financial types
           if (count($result) > 0) {
@@ -98,7 +105,7 @@ function membershipfinancialtypes_civicrm_post($op, $objectName, $id, &$objectRe
         }
         elseif (in_array($membership['membership_type_id'], $monthtypes)) {
           //check if it's greater than six months since the last membership end date for this contact
-          $sql = "SELECT FROM civicrm_membership_tracking WHERE membership_id = {$membership['id']};";
+          $sql = "SELECT * FROM civicrm_membership_tracking WHERE membership_id = {$membership['id']};";
           $tracking = CRM_Core_DAO::executeQuery($sql);
           $result = array();
           while ($tracking->fetch()) {
@@ -129,12 +136,40 @@ function membershipfinancialtypes_civicrm_post($op, $objectName, $id, &$objectRe
       }
     }
   }
+  //whenever we create a membership, check if the source has "Gift Membership" and send an email if so
+  if ($objectName == 'Membership' && $op == 'create') {
+    if (strpos($objectRef->source, 'Gift Membership') !== FALSE) {
+      $result = civicrm_api3('MessageTemplate', 'getsingle', [
+        'sequential' => 1,
+        'id' => 69,
+      ]);
+      $contact = civicrm_api3('Contact', 'getsingle', [
+        'id' => $objectRef->contact_id,
+      ]);
+      $type = civicrm_api3('MembershipType', 'getsingle', [
+        'id' => $objectRef->membership_type_id,
+      ]);
+      $start_date = date('m/d/Y', strtotime($objectRef->start_date));
+      $end_date = date('m/d/Y', strtotime($objectRef->end_date));
+      $params = [];
+      $params['text'] = $result['msg_text'];
+      $params['html'] = $result['msg_html'];
+      $params['subject'] = $result['msg_subject'];
+      $params['from'] = '"American Hiking Society" <info@americanhiking.org>';
+      $params['toEmail'] = $contact['email'];
+      $params['html'] = str_replace("{contact.first_name}", $contact['first_name'], $params['html']);
+      $params['html'] = str_replace("{membership.type}", $type['name'], $params['html']);
+      $params['html'] = str_replace("{membership.start_date}", $start_date, $params['html']);
+      $params['html'] = str_replace("{membership.end_date}", $end_date, $params['html']);
+      CRM_Utils_Mail::send($params);
+    }
+  }
 }
 
 function _updateContributionType($id) {
   try {
     $result = civicrm_api3('Contribution', 'create', [
-      'financial_type_id' => 5,
+      'financial_type_id' => 9,
       'id' => $id,
     ]);
   }
@@ -195,7 +230,7 @@ function _membershipfinancialtypes_check_monthly($payments) {
     //most recent payment
     $recent = array_pop($result['values']);
     //If we're in the new financial type
-    if ($recent['financial_type_id'] == 12) {
+    if ($recent['financial_type_id'] == 9) {
       //This is post creation of the contribution so if we've got 12 of these we're done
       if (($result['count'] - 1) % 12 != 0) {
         return TRUE;
